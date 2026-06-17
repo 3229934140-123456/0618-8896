@@ -7,6 +7,7 @@ import type { Listing } from '@/types';
 export default function HostListings() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   useEffect(() => {
     api.listings.getByHost().then((res) => {
@@ -15,9 +16,20 @@ export default function HostListings() {
   }, []);
 
   const handleDelete = async (id: string) => {
-    if (!confirm('确定要删除此房源吗？')) return;
-    await api.listings.update(id, {});
-    setListings((prev) => prev.filter((l) => l.id !== id));
+    if (!confirm('确定要删除此房源吗？删除后不可恢复。')) return;
+    setDeleting(id);
+    try {
+      const res = await api.listings.delete(id);
+      if (res.success) {
+        setListings((prev) => prev.filter((l) => l.id !== id));
+      } else {
+        alert('删除失败：' + (res.error || '请稍后重试'));
+      }
+    } catch {
+      alert('删除失败，请检查网络后重试');
+    } finally {
+      setDeleting(null);
+    }
   };
 
   if (loading) {
@@ -90,9 +102,10 @@ export default function HostListings() {
                     </Link>
                     <button
                       onClick={() => handleDelete(listing.id)}
-                      className="flex items-center justify-center rounded-lg border border-red-200 px-3 py-2 text-sm text-red-500 transition-colors hover:bg-red-50"
+                      disabled={deleting === listing.id}
+                      className="flex items-center justify-center rounded-lg border border-red-200 px-3 py-2 text-sm text-red-500 transition-colors hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <Trash2 size={14} />
+                      {deleting === listing.id ? '...' : <Trash2 size={14} />}
                     </button>
                   </div>
                 </div>

@@ -47,14 +47,14 @@ router.get('/', (req: AuthRequest, res: Response): void => {
       const allAvailable = days.length > 0 && days.every(d => d.available === 1)
       if (allAvailable) availableListingIds.add(l.id)
     }
-    if (availableListingIds.size > 0) {
-      const ids = [...availableListingIds]
-      const placeholders = ids.map(() => '?').join(',')
-      sql += ` AND id IN (${placeholders})`
-      params.push(...ids)
-    } else {
-      sql += ` AND 1=0`
+    if (availableListingIds.size === 0) {
+      res.json({ success: true, data: [] })
+      return
     }
+    const ids = [...availableListingIds]
+    const placeholders = ids.map(() => '?').join(',')
+    sql += ` AND id IN (${placeholders})`
+    params.push(...ids)
   }
 
   const listings = db.prepare(sql).all(...params)
@@ -188,6 +188,7 @@ router.delete('/:id', authMiddleware, (req: AuthRequest, res: Response): void =>
     return
   }
 
+  db.prepare('DELETE FROM calendar_days WHERE listing_id = ?').run(req.params.id)
   db.prepare('DELETE FROM listings WHERE id = ?').run(req.params.id)
   res.json({ success: true, message: '房源已删除' })
 })

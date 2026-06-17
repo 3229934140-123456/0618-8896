@@ -52,8 +52,16 @@ export default function HostBookings() {
   }, []);
 
   const handleStatusChange = async (bookingId: string, newStatus: string) => {
-    await api.bookings.updateStatus(bookingId, newStatus);
-    fetchBookings();
+    try {
+      const res = await api.bookings.updateStatus(bookingId, newStatus);
+      if (res.success) {
+        fetchBookings();
+      } else {
+        alert('操作失败：' + (res.error || '请稍后重试'));
+      }
+    } catch {
+      alert('操作失败，请检查网络后重试');
+    }
   };
 
   const handleReportStatus = (bookingId: string) => {

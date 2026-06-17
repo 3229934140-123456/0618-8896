@@ -228,6 +228,24 @@ router.put('/:id/status', authMiddleware, (req: AuthRequest, res: Response): voi
     return
   }
 
+  const isHost = booking.host_id === req.user!.id
+  const isGuest = booking.guest_id === req.user!.id
+  if (!isHost && !isGuest) {
+    res.status(403).json({ success: false, error: '无权操作此订单' })
+    return
+  }
+
+  const hostOnlyActions = ['confirmed', 'checked_in', 'checked_out']
+  const guestOnlyActions = ['paid']
+  if (hostOnlyActions.includes(status) && !isHost) {
+    res.status(403).json({ success: false, error: '仅房东可以执行此操作' })
+    return
+  }
+  if (guestOnlyActions.includes(status) && !isGuest) {
+    res.status(403).json({ success: false, error: '仅房客可以执行此操作' })
+    return
+  }
+
   const validTransitions: Record<string, string[]> = {
     pending: ['confirmed', 'cancelled'],
     confirmed: ['paid', 'cancelled'],

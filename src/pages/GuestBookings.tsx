@@ -45,16 +45,22 @@ export default function GuestBookings() {
   const handleSubmitReview = async (bookingId: string) => {
     setSubmitting(true);
     try {
-      await api.reviews.create({
+      const res = await api.reviews.create({
         bookingId,
         rating,
         comment,
         type: 'guest_to_listing',
       });
-      setReviewingId(null);
-      setRating(5);
-      setComment('');
-      fetchBookings();
+      if (res.success) {
+        setReviewingId(null);
+        setRating(5);
+        setComment('');
+        fetchBookings();
+      } else {
+        alert('评价失败：' + (res.error || '请稍后重试'));
+      }
+    } catch {
+      alert('评价失败，请检查网络后重试');
     } finally {
       setSubmitting(false);
     }

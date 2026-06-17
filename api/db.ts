@@ -210,6 +210,15 @@ class PreparedStmt {
     return result
   }
 
+  private _cmp(a: unknown, b: unknown): number {
+    const na = Number(a)
+    const nb = Number(b)
+    if (!isNaN(na) && !isNaN(nb)) return na < nb ? -1 : na > nb ? 1 : 0
+    const sa = String(a ?? '')
+    const sb = String(b ?? '')
+    return sa < sb ? -1 : sa > sb ? 1 : 0
+  }
+
   private _applyWhere(rows: Row[], clause: string, params: unknown[]): Row[] {
     const conditions = clause.split(/\s+AND\s+/i).filter(c => !c.match(/^\d+=\d+$/))
 
@@ -230,16 +239,16 @@ class PreparedStmt {
           if (col !== params[paramIdx++]) return false
         } else if (gteMatch) {
           const col = this._resolveColumn(gteMatch[1], row)
-          if (Number(col) < Number(params[paramIdx++])) return false
+          if (this._cmp(col, params[paramIdx++]) < 0) return false
         } else if (lteMatch) {
           const col = this._resolveColumn(lteMatch[1], row)
-          if (Number(col) > Number(params[paramIdx++])) return false
+          if (this._cmp(col, params[paramIdx++]) > 0) return false
         } else if (ltMatch) {
           const col = this._resolveColumn(ltMatch[1], row)
-          if (Number(col) >= Number(params[paramIdx++])) return false
+          if (this._cmp(col, params[paramIdx++]) >= 0) return false
         } else if (gtMatch) {
           const col = this._resolveColumn(gtMatch[1], row)
-          if (Number(col) <= Number(params[paramIdx++])) return false
+          if (this._cmp(col, params[paramIdx++]) <= 0) return false
         } else if (neqMatch) {
           const col = this._resolveColumn(neqMatch[1], row)
           if (col === params[paramIdx++]) return false
@@ -424,16 +433,16 @@ class PreparedStmt {
         if (col !== params[paramIdx++]) return false
       } else if (gteMatch) {
         const col = this._resolveColumn(gteMatch[1], row)
-        if (Number(col) < Number(params[paramIdx++])) return false
+        if (this._cmp(col, params[paramIdx++]) < 0) return false
       } else if (lteMatch) {
         const col = this._resolveColumn(lteMatch[1], row)
-        if (Number(col) > Number(params[paramIdx++])) return false
+        if (this._cmp(col, params[paramIdx++]) > 0) return false
       } else if (ltMatch) {
         const col = this._resolveColumn(ltMatch[1], row)
-        if (Number(col) >= Number(params[paramIdx++])) return false
+        if (this._cmp(col, params[paramIdx++]) >= 0) return false
       } else if (gtMatch) {
         const col = this._resolveColumn(gtMatch[1], row)
-        if (Number(col) <= Number(params[paramIdx++])) return false
+        if (this._cmp(col, params[paramIdx++]) <= 0) return false
       } else if (neqMatch) {
         const col = this._resolveColumn(neqMatch[1], row)
         if (col === params[paramIdx++]) return false

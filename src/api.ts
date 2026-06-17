@@ -185,6 +185,13 @@ export const api = {
       if (json.data) json.data = (json.data as Record<string, unknown>[]).map(normalizeListing);
       return json;
     },
+    delete: async (id: string) => {
+      const res = await fetch(`${API_BASE}/listings/${id}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      });
+      return res.json();
+    },
     getCalendar: async (listingId: string, _month?: number, _year?: number) => {
       const res = await fetch(`${API_BASE}/listings/${listingId}/calendar`, {
         headers: getAuthHeaders(),
