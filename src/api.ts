@@ -9,6 +9,48 @@ function parseJsonField(val: unknown): unknown {
   return val;
 }
 
+function toSnakeCase(key: string): string {
+  return key.replace(/[A-Z]/g, m => '_' + m.toLowerCase());
+}
+
+function convertToSnakeCase(obj: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    result[toSnakeCase(k)] = v;
+  }
+  return result;
+}
+
+function normalizeCalendarDay(d: Record<string, unknown>): CalendarDay {
+  return {
+    id: d.id as string,
+    listingId: (d.listing_id || d.listingId) as string,
+    date: d.date as string,
+    available: (d.available ?? 1) as number,
+    price: (d.price ?? 0) as number,
+    isHoliday: ((d.is_holiday ?? d.isHoliday ?? 0) as number) === 1,
+  };
+}
+
+function normalizeReview(r: Record<string, unknown>): Review {
+  return {
+    id: r.id as string,
+    bookingId: (r.booking_id || r.bookingId) as string,
+    fromUserId: (r.from_user_id || r.fromUserId) as string,
+    toListingId: (r.to_listing_id || r.toListingId) as string | undefined,
+    toGuestId: (r.to_guest_id || r.toGuestId) as string | undefined,
+    rating: (r.rating ?? 0) as number,
+    comment: (r.comment || '') as string,
+    type: (r.type || 'guest_to_listing') as Review['type'],
+    fromUserName: (r.from_user_name || r.fromUserName) as string | undefined,
+    fromUserAvatar: (r.from_user_avatar || r.fromUserAvatar) as string | undefined,
+    listingTitle: (r.listing_title || r.listingTitle) as string | undefined,
+    createdAt: (r.created_at || r.createdAt || '') as string,
+    direction: (r.direction as 'from_me' | 'to_me' | undefined),
+    toGuestName: (r.to_guest_name || r.toGuestName) as string | undefined,
+  };
+}
+
 function normalizeListing(l: Record<string, unknown>): Listing {
   return {
     id: l.id as string,
@@ -102,22 +144,36 @@ export const api = {
     getById: async (id: string): Promise<{ success: boolean; data: Listing & { reviews: Review[]; calendarDays: CalendarDay[] } }> => {
       const res = await fetch(`${API_BASE}/listings/${id}`);
       const json = await res.json();
-      if (json.data) json.data = normalizeListing(json.data);
+      if (json.data) {
+        const raw = json.data as Record<string, unknown>;
+        const listing = normalizeListing(raw);
+        const reviews = Array.isArray(raw.reviews) ? (raw.reviews as Record<string, unknown>[]).map(normalizeReview) : [];
+        const calendarDays = Array.isArray(raw.calendarDays) ? (raw.calendarDays as Record<string, unknown>[]).map(normalizeCalendarDay) : [];
+        json.data = { ...listing, reviews, calendarDays };
+      }
       return json;
     },
     create: async (data: Partial<Listing>) => {
+      const snakeData = convertToSnakeCase(data as Record<string, unknown>);
+      if (snakeData.images && Array.isArray(snakeData.images)) snakeData.images = JSON.stringify(snakeData.images);
+      if (snakeData.amenities && Array.isArray(snakeData.amenities)) snakeData.amenities = JSON.stringify(snakeData.amenities);
+      if (snakeData.rules && Array.isArray(snakeData.rules)) snakeData.rules = JSON.stringify(snakeData.rules);
       const res = await fetch(`${API_BASE}/listings`, {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify(data),
+        body: JSON.stringify(snakeData),
       });
       return res.json();
     },
     update: async (id: string, data: Partial<Listing>) => {
+      const snakeData = convertToSnakeCase(data as Record<string, unknown>);
+      if (snakeData.images && Array.isArray(snakeData.images)) snakeData.images = JSON.stringify(snakeData.images);
+      if (snakeData.amenities && Array.isArray(snakeData.amenities)) snakeData.amenities = JSON.stringify(snakeData.amenities);
+      if (snakeData.rules && Array.isArray(snakeData.rules)) snakeData.rules = JSON.stringify(snakeData.rules);
       const res = await fetch(`${API_BASE}/listings/${id}`, {
         method: 'PUT',
         headers: getAuthHeaders(),
-        body: JSON.stringify(data),
+        body: JSON.stringify(snakeData),
       });
       return res.json();
     },
@@ -125,21 +181,28 @@ export const api = {
       const res = await fetch(`${API_BASE}/listings/host/mine`, {
         headers: getAuthHeaders(),
       });
-      return res.json();
+      const json = await res.json();
+      if (json.data) json.data = (json.data as Record<string, unknown>[]).map(normalizeListing);
+      return json;
     },
-    getCalendar: async (listingId: string, month: number, year: number) => {
-      const res = await fetch(`${API_BASE}/listings/${listingId}/calendar?month=${month}&year=${year}`, {
+    getCalendar: async (listingId: string, _month?: number, _year?: number) => {
+      const res = await fetch(`${API_BASE}/listings/${listingId}/calendar`, {
         headers: getAuthHeaders(),
       });
-      return res.json();
+      const json = await res.json();
+      if (json.data) json.data = (json.data as Record<string, unknown>[]).map(normalizeCalendarDay);
+      return json;
     },
-    updateCalendar: async (listingId: string, days: Partial<CalendarDay>[]) => {
-      const res = await fetch(`${API_BASE}/listings/${listingId}/calendar`, {
+    updateCalendarDay: async (listingId: string, date: string, data: { available?: boolean; price?: number; isHoliday?: boolean }) => {
+      const snakeData = convertToSnakeCase(data as Record<string, unknown>);
+      const res = await fetch(`${API_BASE}/listings/${listingId}/calendar/${date}`, {
         method: 'PUT',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ days }),
+        body: JSON.stringify(snakeData),
       });
-      return res.json();
+      const json = await res.json();
+      if (json.data) json.data = normalizeCalendarDay(json.data as Record<string, unknown>);
+      return json;
     },
   },
 
@@ -188,28 +251,33 @@ export const api = {
 
   reviews: {
     create: async (data: { bookingId: string; rating: number; comment: string; type: 'guest_to_listing' | 'host_to_guest' }) => {
+      const snakeData = convertToSnakeCase(data as Record<string, unknown>);
       const res = await fetch(`${API_BASE}/reviews`, {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify(data),
+        body: JSON.stringify(snakeData),
       });
       return res.json();
     },
     getByListing: async (listingId: string): Promise<{ success: boolean; data: Review[] }> => {
       const res = await fetch(`${API_BASE}/reviews/listing/${listingId}`);
-      return res.json();
+      const json = await res.json();
+      if (json.data) json.data = (json.data as Record<string, unknown>[]).map(normalizeReview);
+      return json;
     },
-    getByGuest: async (): Promise<{ success: boolean; data: Review[] }> => {
-      const res = await fetch(`${API_BASE}/reviews/guest`, {
+    getByHost: async (hostId: string): Promise<{ success: boolean; data: Review[] }> => {
+      const res = await fetch(`${API_BASE}/reviews/host/${hostId}`);
+      const json = await res.json();
+      if (json.data) json.data = (json.data as Record<string, unknown>[]).map(normalizeReview);
+      return json;
+    },
+    getByGuest: async (guestId: string): Promise<{ success: boolean; data: Review[] }> => {
+      const res = await fetch(`${API_BASE}/reviews/guest/${guestId}`, {
         headers: getAuthHeaders(),
       });
-      return res.json();
-    },
-    getByHost: async (): Promise<{ success: boolean; data: Review[] }> => {
-      const res = await fetch(`${API_BASE}/reviews/host`, {
-        headers: getAuthHeaders(),
-      });
-      return res.json();
+      const json = await res.json();
+      if (json.data) json.data = (json.data as Record<string, unknown>[]).map(normalizeReview);
+      return json;
     },
   },
 
@@ -238,15 +306,16 @@ export const api = {
 
   roomStatus: {
     report: async (bookingId: string, status: string, note: string) => {
-      const res = await fetch(`${API_BASE}/room-status/${bookingId}`, {
-        method: 'PUT',
+      const snakeData = convertToSnakeCase({ bookingId, status, note });
+      const res = await fetch(`${API_BASE}/room-status`, {
+        method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ status, note }),
+        body: JSON.stringify(snakeData),
       });
       return res.json();
     },
     getHistory: async (bookingId: string) => {
-      const res = await fetch(`${API_BASE}/room-status/${bookingId}`, {
+      const res = await fetch(`${API_BASE}/room-status/booking/${bookingId}`, {
         headers: getAuthHeaders(),
       });
       return res.json();

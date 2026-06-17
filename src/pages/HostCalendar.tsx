@@ -72,35 +72,39 @@ export default function HostCalendar() {
 
   const handleDayClick = (cell: CalendarDay & { dayNum: number }) => {
     setEditDay(cell);
-    setEditAvailable(cell.available);
+    setEditAvailable(Number(cell.available) === 1 ? true : false);
     setEditPrice(cell.price);
-    setEditIsHoliday(cell.isHoliday);
+    setEditIsHoliday(!!cell.isHoliday);
   };
 
-  const handleEditSave = () => {
-    if (!editDay) return;
-    setCalendarDays((prev) =>
-      prev.map((d) =>
-        d.date === editDay.date
-          ? { ...d, available: editAvailable, price: editPrice, isHoliday: editIsHoliday }
-          : d
-      )
-    );
-    setEditDay(null);
-  };
-
-  const handleBatchSave = async () => {
-    if (!id) return;
+  const handleEditSave = async () => {
+    if (!editDay || !id) return;
     setSaving(true);
     try {
-      await api.listings.updateCalendar(id, calendarDays);
+      await api.listings.updateCalendarDay(id, editDay.date, {
+        available: editAvailable ? true : false,
+        price: editPrice,
+        isHoliday: editIsHoliday,
+      });
+      setCalendarDays((prev) =>
+        prev.map((d) =>
+          d.date === editDay.date
+            ? { ...d, available: editAvailable ? 1 : 0, price: editPrice, isHoliday: editIsHoliday }
+            : d
+        )
+      );
     } finally {
       setSaving(false);
     }
+    setEditDay(null);
+  };
+
+  const handleBatchSave = () => {
+    setSaving(false);
   };
 
   const getDotColor = (cell: CalendarDay) => {
-    if (!cell.available) return 'bg-surface-300';
+    if (Number(cell.available) !== 1) return 'bg-surface-300';
     if (cell.isHoliday) return 'bg-red-500';
     return 'bg-green-500';
   };

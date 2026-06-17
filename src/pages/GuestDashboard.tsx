@@ -16,8 +16,8 @@ export default function GuestDashboard() {
   }, []);
 
   const upcoming = bookings.filter((b) => b.status === 'confirmed').slice(0, 3);
-  const completedCount = bookings.filter((b) => b.status === 'checkedout').length;
-  const reviewedCount = bookings.filter((b) => b.status === 'checkedout').length;
+  const completedCount = bookings.filter((b) => b.status === 'checked_out').length;
+  const reviewedCount = bookings.filter((b) => b.status === 'checked_out').length;
 
   return (
     <div className="container mx-auto px-4 py-8">

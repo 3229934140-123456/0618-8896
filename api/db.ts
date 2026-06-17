@@ -83,8 +83,9 @@ class PreparedStmt {
   }
 
   private _select(params: unknown[]): Row[] {
-    const { tableName, joins, whereClause, whereParams, selectFields, orderBy, groupBy, havingClause, havingParams } = this._parseSelect()
+    const { tableName, joins, whereClause, selectFields, orderBy, groupBy } = this._parseSelect()
 
+    this._currentParams = params
     let rows: Row[] = []
 
     if (joins.length > 0) {
@@ -93,12 +94,12 @@ class PreparedStmt {
       rows = [...this.db.getTable(tableName)]
     }
 
-    if (whereClause && whereParams.length > 0) {
-      rows = this._applyWhere(rows, whereClause, whereParams)
+    if (whereClause && params.length > 0) {
+      rows = this._applyWhere(rows, whereClause, params)
     }
 
     if (groupBy) {
-      rows = this._applyGroupBy(rows, groupBy, havingClause, havingParams)
+      rows = this._applyGroupBySimple(rows, groupBy)
     }
 
     if (selectFields && selectFields !== '*' && !selectFields.match(/^\w+\.\*$/)) {
@@ -124,39 +125,35 @@ class PreparedStmt {
 
     const whereMatch = sql.match(/WHERE\s+(.*?)(?:\s+ORDER BY|\s+GROUP BY|\s+HAVING|$)/i)
     const whereClause = whereMatch ? whereMatch[1] : ''
-    const whereParams: unknown[] = []
 
     const groupByMatch = sql.match(/GROUP BY\s+([\w.]+)(?:\s+HAVING\s+(.*?))?(?:\s+ORDER BY|$)/i)
     const groupBy = groupByMatch ? groupByMatch[1] : ''
-    const havingClause = groupByMatch ? groupByMatch[2] || '' : ''
-    const havingParams: unknown[] = []
 
     const orderMatch = sql.match(/ORDER BY\s+(.*?)$/i)
     const orderBy = orderMatch ? orderMatch[1] : ''
 
-    let paramIdx = 0
-    const countPlaceholders = (s: string) => (s.match(/\?/g) || []).length
+    return { tableName, joins, whereClause, selectFields, orderBy, groupBy }
+  }
 
-    paramIdx += countPlaceholders(selectFields)
+  private _applyGroupBySimple(rows: Row[], groupBy: string): Row[] {
+    const groups = new Map<string, Row[]>()
+    const groupCol = groupBy.replace(/\w+\./, '')
 
-    const wherePlaceholderCount = countPlaceholders(whereClause)
-    if (wherePlaceholderCount > 0) {
-      const mergedParams = this._mergeParams()
-      for (let i = paramIdx; i < paramIdx + wherePlaceholderCount && i < mergedParams.length; i++) {
-        whereParams.push(mergedParams[i])
-      }
-      paramIdx += wherePlaceholderCount
+    for (const row of rows) {
+      const key = String(row[groupCol] ?? '')
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)!.push(row)
     }
 
-    const havingPlaceholderCount = countPlaceholders(havingClause)
-    if (havingPlaceholderCount > 0) {
-      const mergedParams = this._mergeParams()
-      for (let i = paramIdx; i < paramIdx + havingPlaceholderCount && i < mergedParams.length; i++) {
-        havingParams.push(mergedParams[i])
+    const result: Row[] = []
+    for (const [key, groupRows] of groups) {
+      const aggregated: Row = {
+        [groupCol]: groupRows[0][groupCol],
+        count: groupRows.length,
       }
+      result.push(aggregated)
     }
-
-    return { tableName, joins, whereClause, whereParams, selectFields, orderBy, groupBy, havingClause, havingParams }
+    return result
   }
 
   private _mergeParams(): unknown[] {
@@ -215,9 +212,9 @@ class PreparedStmt {
 
   private _applyWhere(rows: Row[], clause: string, params: unknown[]): Row[] {
     const conditions = clause.split(/\s+AND\s+/i).filter(c => !c.match(/^\d+=\d+$/))
-    let paramIdx = 0
 
     return rows.filter(row => {
+      let paramIdx = 0
       for (const cond of conditions) {
         const eqMatch = cond.match(/([\w.]+)\s*=\s*\?/)
         const gteMatch = cond.match(/([\w.]+)\s*>=\s*\?/)
@@ -225,6 +222,8 @@ class PreparedStmt {
         const neqMatch = cond.match(/([\w.]+)\s*!=\s*\?/)
         const inMatch = cond.match(/([\w.]+)\s+IN\s+\(([^)]+)\)/i)
         const likeMatch = cond.match(/([\w.]+)\s+LIKE\s+\?/i)
+        const ltMatch = cond.match(/([\w.]+)\s*<\s*\?/)
+        const gtMatch = cond.match(/([\w.]+)\s*>\s*\?/)
 
         if (eqMatch) {
           const col = this._resolveColumn(eqMatch[1], row)
@@ -235,6 +234,12 @@ class PreparedStmt {
         } else if (lteMatch) {
           const col = this._resolveColumn(lteMatch[1], row)
           if (Number(col) > Number(params[paramIdx++])) return false
+        } else if (ltMatch) {
+          const col = this._resolveColumn(ltMatch[1], row)
+          if (Number(col) >= Number(params[paramIdx++])) return false
+        } else if (gtMatch) {
+          const col = this._resolveColumn(gtMatch[1], row)
+          if (Number(col) <= Number(params[paramIdx++])) return false
         } else if (neqMatch) {
           const col = this._resolveColumn(neqMatch[1], row)
           if (col === params[paramIdx++]) return false
@@ -377,52 +382,71 @@ class PreparedStmt {
     if (!setMatch) return { changes: 0, lastInsertRowid: 0 }
 
     const setClauses = setMatch[1].split(',').map(s => s.trim())
+    const setFields: string[] = []
+    for (const clause of setClauses) {
+      const eqMatch = clause.match(/(\w+)\s*=\s*\?/)
+      if (eqMatch) setFields.push(eqMatch[1])
+    }
+
     const whereMatch = this.sql.match(/WHERE\s+(.*?)$/i)
+    const setCount = setFields.length
 
     let changes = 0
-    let paramIdx = 0
-
-    for (const row of table) {
+    for (let i = 0; i < table.length; i++) {
       if (whereMatch) {
-        if (!this._matchesWhere(row, whereMatch[1], params, setClauses.length)) continue
+        const whereParams = params.slice(setCount)
+        if (!this._rowMatchesWhere(table[i], whereMatch[1], whereParams)) continue
       }
-
-      for (const clause of setClauses) {
-        const eqMatch = clause.match(/(\w+)\s*=\s*\?/)
-        if (eqMatch) {
-          row[eqMatch[1]] = params[paramIdx++]
-        }
+      for (let j = 0; j < setFields.length; j++) {
+        table[i][setFields[j]] = params[j]
       }
-
-      if (whereMatch) {
-        paramIdx = setClauses.length
-        const whereParamStart = setClauses.length
-        const remainingParams = params.slice(whereParamStart)
-        this._applyWhereUpdate(row, whereMatch[1], remainingParams)
-      }
-
       changes++
     }
 
     return { changes, lastInsertRowid: 0 }
   }
 
-  private _matchesWhere(row: Row, whereClause: string, params: unknown[], setClauseCount: number): boolean {
-    const conditions = whereClause.split(/\s+AND\s+/i)
-    let paramIdx = setClauseCount
+  private _rowMatchesWhere(row: Row, whereClause: string, params: unknown[]): boolean {
+    const conditions = whereClause.split(/\s+AND\s+/i).filter(c => !c.match(/^\d+=\d+$/))
+    let paramIdx = 0
 
     for (const cond of conditions) {
       const eqMatch = cond.match(/([\w.]+)\s*=\s*\?/)
+      const gteMatch = cond.match(/([\w.]+)\s*>=\s*\?/)
+      const lteMatch = cond.match(/([\w.]+)\s*<=\s*\?/)
+      const ltMatch = cond.match(/([\w.]+)\s*<\s*\?/)
+      const gtMatch = cond.match(/([\w.]+)\s*>\s*\?/)
+      const neqMatch = cond.match(/([\w.]+)\s*!=\s*\?/)
+      const inMatch = cond.match(/([\w.]+)\s+IN\s+\(([^)]+)\)/i)
+
       if (eqMatch) {
-        const col = eqMatch[1].replace(/\w+\./, '')
-        if (row[col] !== params[paramIdx++]) return false
+        const col = this._resolveColumn(eqMatch[1], row)
+        if (col !== params[paramIdx++]) return false
+      } else if (gteMatch) {
+        const col = this._resolveColumn(gteMatch[1], row)
+        if (Number(col) < Number(params[paramIdx++])) return false
+      } else if (lteMatch) {
+        const col = this._resolveColumn(lteMatch[1], row)
+        if (Number(col) > Number(params[paramIdx++])) return false
+      } else if (ltMatch) {
+        const col = this._resolveColumn(ltMatch[1], row)
+        if (Number(col) >= Number(params[paramIdx++])) return false
+      } else if (gtMatch) {
+        const col = this._resolveColumn(gtMatch[1], row)
+        if (Number(col) <= Number(params[paramIdx++])) return false
+      } else if (neqMatch) {
+        const col = this._resolveColumn(neqMatch[1], row)
+        if (col === params[paramIdx++]) return false
+      } else if (inMatch) {
+        const col = this._resolveColumn(inMatch[1], row)
+        const placeholders = inMatch[2].split(',').filter(s => s.trim() === '?').length
+        const values = params.slice(paramIdx, paramIdx + placeholders)
+        paramIdx += placeholders
+        if (!values.includes(col)) return false
       }
     }
-
     return true
   }
-
-  private _applyWhereUpdate(_row: Row, _whereClause: string, _params: unknown[]): void {}
 
   private _delete(params: unknown[]): { changes: number; lastInsertRowid: number } {
     const tableName = this._extractTableName(this.sql)
@@ -436,35 +460,12 @@ class PreparedStmt {
     }
 
     const before = table.length
-    const conditions = whereMatch[1].split(/\s+AND\s+/i)
-    let paramIdx = 0
+    const newTable = table.filter(row => !this._rowMatchesWhere(row, whereMatch[1], params))
+    const removed = before - newTable.length
+    table.length = 0
+    for (const r of newTable) table.push(r)
 
-    const toRemove = table.filter(row => {
-      for (const cond of conditions) {
-        const eqMatch = cond.match(/([\w.]+)\s*=\s*\?/)
-        const gteMatch = cond.match(/([\w.]+)\s*>=\s*\?/)
-        const ltMatch = cond.match(/([\w.]+)\s*<\s*\?/)
-
-        if (eqMatch) {
-          const col = eqMatch[1].replace(/\w+\./, '')
-          if (row[col] !== params[paramIdx++]) return false
-        } else if (gteMatch) {
-          const col = gteMatch[1].replace(/\w+\./, '')
-          if (String(row[col]) < String(params[paramIdx++])) return false
-        } else if (ltMatch) {
-          const col = ltMatch[1].replace(/\w+\./, '')
-          if (String(row[col]) >= String(params[paramIdx++])) return false
-        }
-      }
-      return true
-    })
-
-    for (const row of toRemove) {
-      const idx = table.indexOf(row)
-      if (idx !== -1) table.splice(idx, 1)
-    }
-
-    return { changes: before - table.length, lastInsertRowid: 0 }
+    return { changes: removed, lastInsertRowid: 0 }
   }
 
   private _extractTableName(sql: string): string {

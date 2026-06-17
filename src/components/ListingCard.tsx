@@ -3,7 +3,8 @@ import { Star, Heart, MapPin } from 'lucide-react';
 import type { Listing } from '@/types';
 
 export default function ListingCard({ listing }: { listing: Listing }) {
-  const images: string[] = typeof (listing as Record<string, unknown>).images === 'string' ? JSON.parse((listing as Record<string, unknown>).images as string) : (listing.images || []);
+  const listingRaw = listing as unknown as Record<string, unknown>;
+  const images: string[] = typeof listingRaw.images === 'string' ? JSON.parse(listingRaw.images as string) : (listing.images || []);
   const rating = listing.rating ?? 0;
   const reviewCount = listing.reviewCount ?? 0;
   const basePrice = listing.basePrice ?? 0;

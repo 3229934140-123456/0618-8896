@@ -174,12 +174,20 @@ router.get('/guest', authMiddleware, (req: AuthRequest, res: Response): void => 
   }
 
   const bookings = db.prepare(
-    `SELECT b.*, l.title as listing_title, l.city as listing_city, l.images as listing_images
-     FROM bookings b JOIN listings l ON b.listing_id = l.id
-     WHERE b.guest_id = ? ORDER BY b.created_at DESC`
-  ).all(req.user!.id)
+    `SELECT * FROM bookings WHERE guest_id = ? ORDER BY created_at DESC`
+  ).all(req.user!.id) as Record<string, unknown>[]
 
-  res.json({ success: true, data: bookings })
+  const result = bookings.map(b => {
+    const listing = db.prepare('SELECT title, city, images FROM listings WHERE id = ?').get(b.listing_id as string) as Record<string, unknown> | undefined
+    return {
+      ...b,
+      listing_title: listing?.title as string | undefined,
+      listing_city: listing?.city as string | undefined,
+      listing_images: listing?.images as string | undefined,
+    }
+  })
+
+  res.json({ success: true, data: result })
 })
 
 router.get('/host', authMiddleware, (req: AuthRequest, res: Response): void => {
@@ -189,15 +197,23 @@ router.get('/host', authMiddleware, (req: AuthRequest, res: Response): void => {
   }
 
   const bookings = db.prepare(
-    `SELECT b.*, l.title as listing_title, l.city as listing_city, l.images as listing_images,
-            u.name as guest_name, u.avatar as guest_avatar
-     FROM bookings b
-     JOIN listings l ON b.listing_id = l.id
-     JOIN users u ON b.guest_id = u.id
-     WHERE b.host_id = ? ORDER BY b.created_at DESC`
-  ).all(req.user!.id)
+    `SELECT * FROM bookings WHERE host_id = ? ORDER BY created_at DESC`
+  ).all(req.user!.id) as Record<string, unknown>[]
 
-  res.json({ success: true, data: bookings })
+  const result = bookings.map(b => {
+    const listing = db.prepare('SELECT title, city, images FROM listings WHERE id = ?').get(b.listing_id as string) as Record<string, unknown> | undefined
+    const guest = db.prepare('SELECT name, avatar FROM users WHERE id = ?').get(b.guest_id as string) as Record<string, unknown> | undefined
+    return {
+      ...b,
+      listing_title: listing?.title as string | undefined,
+      listing_city: listing?.city as string | undefined,
+      listing_images: listing?.images as string | undefined,
+      guest_name: guest?.name as string | undefined,
+      guest_avatar: guest?.avatar as string | undefined,
+    }
+  })
+
+  res.json({ success: true, data: result })
 })
 
 router.put('/:id/status', authMiddleware, (req: AuthRequest, res: Response): void => {
@@ -275,19 +291,24 @@ router.put('/:id/status', authMiddleware, (req: AuthRequest, res: Response): voi
 })
 
 router.get('/:id', authMiddleware, (req: AuthRequest, res: Response): void => {
-  const booking = db.prepare(
-    `SELECT b.*, l.title as listing_title, l.city as listing_city, l.address as listing_address,
-            l.images as listing_images, l.base_price as listing_base_price
-     FROM bookings b JOIN listings l ON b.listing_id = l.id
-     WHERE b.id = ?`
-  ).get(req.params.id)
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id) as Record<string, unknown> | undefined
 
   if (!booking) {
     res.status(404).json({ success: false, error: '预订不存在' })
     return
   }
 
-  res.json({ success: true, data: booking })
+  const listing = db.prepare('SELECT title, city, address, images, base_price FROM listings WHERE id = ?').get(booking.listing_id as string) as Record<string, unknown> | undefined
+  const result = {
+    ...booking,
+    listing_title: listing?.title as string | undefined,
+    listing_city: listing?.city as string | undefined,
+    listing_address: listing?.address as string | undefined,
+    listing_images: listing?.images as string | undefined,
+    listing_base_price: listing?.base_price as number | undefined,
+  }
+
+  res.json({ success: true, data: result })
 })
 
 export default router

@@ -31,9 +31,9 @@ export interface CalendarDay {
   id: string;
   listingId: string;
   date: string;
-  available: boolean;
+  available: number | boolean;
   price: number;
-  isHoliday: boolean;
+  isHoliday: number | boolean;
 }
 
 export interface Booking {
@@ -50,7 +50,7 @@ export interface Booking {
   checkOut: string;
   guests: number;
   totalPrice: number;
-  status: 'pending' | 'confirmed' | 'rejected' | 'checkedin' | 'checkedout' | 'cancelled';
+  status: 'pending' | 'confirmed' | 'paid' | 'checked_in' | 'checked_out' | 'cancelled';
   confirmationCode: string;
   doorPassword: string;
   checkInInstructions: string;
@@ -62,12 +62,16 @@ export interface Review {
   bookingId: string;
   fromUserId: string;
   fromUserName?: string;
+  fromUserAvatar?: string;
   toListingId?: string;
   toGuestId?: string;
   rating: number;
   comment: string;
   type: 'guest_to_listing' | 'host_to_guest';
+  listingTitle?: string;
   createdAt: string;
+  direction?: 'from_me' | 'to_me';
+  toGuestName?: string;
 }
 
 export interface Notification {

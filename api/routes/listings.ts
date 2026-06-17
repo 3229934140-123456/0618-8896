@@ -68,13 +68,24 @@ router.get('/:id', (req: AuthRequest, res: Response): void => {
     res.status(404).json({ success: false, error: '房源不存在' })
     return
   }
-  const host = db.prepare('SELECT id, name, avatar FROM users WHERE id = ?').get((listing as Record<string, unknown>).host_id)
-  const reviews = db.prepare(
-    `SELECT r.*, u.name as from_user_name FROM reviews r JOIN users u ON r.from_user_id = u.id WHERE r.to_listing_id = ? AND r.type = 'guest_to_listing' ORDER BY r.created_at DESC`
-  ).all(req.params.id)
+  const host = db.prepare('SELECT id, name, avatar FROM users WHERE id = ?').get((listing as Record<string, unknown>).host_id as string)
+  const reviewRows = db.prepare(
+    `SELECT * FROM reviews WHERE to_listing_id = ? AND type = 'guest_to_listing' ORDER BY created_at DESC`
+  ).all(req.params.id) as Record<string, unknown>[]
+  const reviews = reviewRows.map(r => {
+    const user = db.prepare('SELECT name FROM users WHERE id = ?').get(r.from_user_id as string) as { name: string } | undefined
+    return { ...r, from_user_name: user?.name || '' }
+  })
   const calendarDays = db.prepare('SELECT * FROM calendar_days WHERE listing_id = ? ORDER BY date').all(req.params.id)
-  res.json({ success: true, data: { ...listing, hostName: (host as Record<string, unknown>)?.name, reviews, calendarDays } })
+  res.json({ success: true, data: { ...listing, hostName: (host as Record<string, unknown>)?.name as string | undefined, reviews, calendarDays } })
 })
+
+function _formatDate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
 
 router.post('/', authMiddleware, (req: AuthRequest, res: Response): void => {
   if (req.user!.role !== 'host') {
@@ -101,6 +112,16 @@ router.post('/', authMiddleware, (req: AuthRequest, res: Response): void => {
     JSON.stringify(images || []), JSON.stringify(amenities || []), JSON.stringify(rules || []),
     max_guests || 1, bedrooms || 1, bathrooms || 1, base_price
   )
+
+  const today = new Date()
+  for (let j = 0; j < 90; j++) {
+    const d = new Date(today)
+    d.setDate(d.getDate() + j)
+    const dateStr = _formatDate(d)
+    db.prepare(
+      'INSERT INTO calendar_days (id, listing_id, date, available, price, is_holiday) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(uuidv4(), id, dateStr, 1, base_price, 0)
+  }
 
   const listing = db.prepare('SELECT * FROM listings WHERE id = ?').get(id)
   res.status(201).json({ success: true, data: listing })

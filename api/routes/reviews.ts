@@ -66,13 +66,15 @@ router.post('/', authMiddleware, (req: AuthRequest, res: Response): void => {
   ).run(id, booking_id, req.user!.id, to_listing_id, to_guest_id, rating, comment || '', type)
 
   if (type === 'guest_to_listing' && to_listing_id) {
-    const stats = db.prepare(
-      'SELECT AVG(rating) as avg_rating, COUNT(*) as count FROM reviews WHERE to_listing_id = ? AND type = ?'
-    ).get(to_listing_id, 'guest_to_listing') as { avg_rating: number; count: number }
+    const allReviews = db.prepare(
+      'SELECT rating FROM reviews WHERE to_listing_id = ? AND type = ?'
+    ).all(to_listing_id, 'guest_to_listing') as { rating: number }[]
+    const count = allReviews.length
+    const avg = count > 0 ? allReviews.reduce((s, r) => s + r.rating, 0) / count : 0
 
     db.prepare('UPDATE listings SET rating = ?, review_count = ? WHERE id = ?').run(
-      Math.round(stats.avg_rating * 10) / 10,
-      stats.count,
+      Math.round(avg * 10) / 10,
+      count,
       to_listing_id
     )
   }
@@ -83,13 +85,19 @@ router.post('/', authMiddleware, (req: AuthRequest, res: Response): void => {
 
 router.get('/listing/:listingId', (req: AuthRequest, res: Response): void => {
   const reviews = db.prepare(
-    `SELECT r.*, u.name as from_user_name, u.avatar as from_user_avatar
-     FROM reviews r JOIN users u ON r.from_user_id = u.id
-     WHERE r.to_listing_id = ? AND r.type = 'guest_to_listing'
-     ORDER BY r.created_at DESC`
-  ).all(req.params.listingId)
+    `SELECT * FROM reviews WHERE to_listing_id = ? AND type = 'guest_to_listing' ORDER BY created_at DESC`
+  ).all(req.params.listingId) as Record<string, unknown>[]
 
-  res.json({ success: true, data: reviews })
+  const result = reviews.map(r => {
+    const user = db.prepare('SELECT name, avatar FROM users WHERE id = ?').get(r.from_user_id as string) as Record<string, unknown> | undefined
+    return {
+      ...r,
+      from_user_name: user?.name as string | undefined,
+      from_user_avatar: user?.avatar as string | undefined,
+    }
+  })
+
+  res.json({ success: true, data: result })
 })
 
 router.get('/host/:hostId', (req: AuthRequest, res: Response): void => {
@@ -101,18 +109,67 @@ router.get('/host/:hostId', (req: AuthRequest, res: Response): void => {
   }
 
   const ids = listingIds.map(l => l.id)
-  const placeholders = ids.map(() => '?').join(',')
+  const allReviews: Record<string, unknown>[] = []
+  for (const lid of ids) {
+    const rs = db.prepare(
+      `SELECT * FROM reviews WHERE to_listing_id = ? AND type = 'guest_to_listing' ORDER BY created_at DESC`
+    ).all(lid) as Record<string, unknown>[]
+    const listing = db.prepare('SELECT title FROM listings WHERE id = ?').get(lid) as { title: string } | undefined
+    for (const r of rs) {
+      const user = db.prepare('SELECT name, avatar FROM users WHERE id = ?').get(r.from_user_id as string) as Record<string, unknown> | undefined
+      allReviews.push({
+        ...r,
+        from_user_name: user?.name as string | undefined,
+        from_user_avatar: user?.avatar as string | undefined,
+        listing_title: listing?.title,
+      })
+    }
+  }
 
-  const reviews = db.prepare(
-    `SELECT r.*, u.name as from_user_name, u.avatar as from_user_avatar, l.title as listing_title
-     FROM reviews r
-     JOIN users u ON r.from_user_id = u.id
-     JOIN listings l ON r.to_listing_id = l.id
-     WHERE r.to_listing_id IN (${placeholders}) AND r.type = 'guest_to_listing'
-     ORDER BY r.created_at DESC`
-  ).all(...ids)
+  allReviews.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+  res.json({ success: true, data: allReviews })
+})
 
-  res.json({ success: true, data: reviews })
+router.get('/guest/:guestId', (req: AuthRequest, res: Response): void => {
+  const guestId = req.params.guestId
+
+  const fromReviews = db.prepare(
+    `SELECT * FROM reviews WHERE from_user_id = ? ORDER BY created_at DESC`
+  ).all(guestId) as Record<string, unknown>[]
+
+  const toReviews = db.prepare(
+    `SELECT * FROM reviews WHERE to_guest_id = ? ORDER BY created_at DESC`
+  ).all(guestId) as Record<string, unknown>[]
+
+  const allReviews: Record<string, unknown>[] = []
+
+  for (const r of fromReviews) {
+    const listing = r.to_listing_id
+      ? (db.prepare('SELECT title FROM listings WHERE id = ?').get(r.to_listing_id as string) as { title: string } | undefined)
+      : undefined
+    const toGuest = r.to_guest_id
+      ? (db.prepare('SELECT name FROM users WHERE id = ?').get(r.to_guest_id as string) as { name: string } | undefined)
+      : undefined
+    allReviews.push({
+      ...r,
+      listing_title: listing?.title,
+      to_guest_name: toGuest?.name,
+      direction: 'from_me',
+    })
+  }
+
+  for (const r of toReviews) {
+    const fromUser = db.prepare('SELECT name, avatar FROM users WHERE id = ?').get(r.from_user_id as string) as Record<string, unknown> | undefined
+    allReviews.push({
+      ...r,
+      from_user_name: fromUser?.name,
+      from_user_avatar: fromUser?.avatar,
+      direction: 'to_me',
+    })
+  }
+
+  allReviews.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+  res.json({ success: true, data: allReviews })
 })
 
 export default router

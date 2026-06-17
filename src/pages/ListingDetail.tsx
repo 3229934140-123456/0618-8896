@@ -61,7 +61,14 @@ export default function ListingDetail() {
   const isLoggedIn = !!localStorage.getItem('token');
 
   const nights = checkIn && checkOut ? daysBetween(checkIn, checkOut) : 0;
-  const totalPrice = listing ? listing.basePrice * nights : 0;
+  const totalPrice = useMemo(() => {
+    if (!checkIn || !checkOut || nights <= 0) return 0;
+    let sum = 0;
+    for (const d of calendarDays) {
+      if (d.date >= checkIn && d.date < checkOut) sum += Number(d.price);
+    }
+    return sum > 0 ? sum : (listing?.basePrice || 0) * nights;
+  }, [calendarDays, checkIn, checkOut, nights, listing]);
 
   useEffect(() => {
     if (!id) return;
@@ -95,7 +102,7 @@ export default function ListingDetail() {
 
   function handleDayClick(dateStr: string) {
     const day = calendarMap.get(dateStr);
-    if (!day?.available) return;
+    if (!day || Number(day.available) !== 1) return;
     if (!checkIn || (checkIn && checkOut)) {
       setCheckIn(dateStr);
       setCheckOut('');
@@ -270,16 +277,18 @@ export default function ListingDetail() {
                     if (!cell) return <div key={`e${i}`} className="h-16" />;
                     const isSelected = cell.date === checkIn || cell.date === checkOut;
                     const isInRange = checkIn && checkOut && cell.date > checkIn && cell.date < checkOut;
+                    const cellAvailable = Number(cell.available) === 1;
+                    const cellIsHoliday = Number(cell.isHoliday) === 1;
                     let bg = 'bg-surface-100 text-brand-800/40';
-                    if (cell.available && !cell.isHoliday) bg = 'bg-green-50 text-green-800';
-                    if (cell.isHoliday) bg = 'bg-red-50 text-red-700';
+                    if (cellAvailable && !cellIsHoliday) bg = 'bg-green-50 text-green-800';
+                    if (cellIsHoliday) bg = 'bg-red-50 text-red-700';
                     if (isSelected) bg = 'bg-brand-500 text-white';
                     if (isInRange) bg = 'bg-brand-100 text-brand-800';
                     return (
                       <button
                         key={cell.date}
                         onClick={() => handleDayClick(cell.date)}
-                        className={`h-16 rounded-lg flex flex-col items-center justify-center text-xs transition-colors ${bg} ${cell.available ? 'cursor-pointer hover:ring-2 hover:ring-brand-300' : 'cursor-not-allowed'}`}
+                        className={`h-16 rounded-lg flex flex-col items-center justify-center text-xs transition-colors ${bg} ${cellAvailable ? 'cursor-pointer hover:ring-2 hover:ring-brand-300' : 'cursor-not-allowed'}`}
                       >
                         <span className="font-medium">{cell.dayNum}</span>
                         <span className="text-[10px] mt-0.5">¥{cell.price}</span>

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Star, Send } from 'lucide-react';
 import { api } from '@/api';
 import type { Review, Booking } from '@/types';
+import { useAuthStore } from '@/store';
 
 export default function HostReviews() {
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -11,26 +12,28 @@ export default function HostReviews() {
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewComment, setReviewComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const user = useAuthStore((s) => s.user);
 
   useEffect(() => {
-    Promise.all([api.reviews.getByHost(), api.bookings.getByHost()])
+    if (!user) return;
+    Promise.all([api.reviews.getByHost(user.id), api.bookings.getByHost()])
       .then(([reviewsRes, bookingsRes]) => {
         if (reviewsRes.success) setReviews(reviewsRes.data);
         if (bookingsRes.success) setBookings(bookingsRes.data);
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [user]);
 
   const reviewedBookingIds = new Set(
     reviews.filter((r) => r.type === 'host_to_guest').map((r) => r.bookingId)
   );
 
   const uncheckedBookings = bookings.filter(
-    (b) => b.status === 'checkedout' && !reviewedBookingIds.has(b.id)
+    (b) => b.status === 'checked_out' && !reviewedBookingIds.has(b.id)
   );
 
   const handleSubmitReview = async () => {
-    if (!reviewingBookingId || !reviewComment.trim()) return;
+    if (!reviewingBookingId || !reviewComment.trim() || !user) return;
     setSubmitting(true);
     try {
       await api.reviews.create({
@@ -42,7 +45,7 @@ export default function HostReviews() {
       setReviewingBookingId(null);
       setReviewRating(5);
       setReviewComment('');
-      const res = await api.reviews.getByHost();
+      const res = await api.reviews.getByHost(user.id);
       if (res.success) setReviews(res.data);
     } finally {
       setSubmitting(false);
